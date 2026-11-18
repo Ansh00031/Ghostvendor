@@ -1,0 +1,623 @@
+import streamlit as st
+import time
+import os
+import sys
+
+# Ensure local imports work cleanly whether run as standalone repo or subfolder
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    from scenarios.samples import SCENARIOS
+    from agents.detector import DependencyDetective
+    from agents.impostor import VendorImpostorFactory
+    from agents.chaos import ChaosEngine
+    from agents.diagnostics import DiagnosticAgent
+    from agents.self_healer import SelfHealerAgent
+    from agents.verifier import VerifierAgent
+    from agents.pr_generator import generate_pr_markdown
+except ImportError:
+    from ghostvendor.scenarios.samples import SCENARIOS
+    from ghostvendor.agents.detector import DependencyDetective
+    from ghostvendor.agents.impostor import VendorImpostorFactory
+    from ghostvendor.agents.chaos import ChaosEngine
+    from ghostvendor.agents.diagnostics import DiagnosticAgent
+    from ghostvendor.agents.self_healer import SelfHealerAgent
+    from ghostvendor.agents.verifier import VerifierAgent
+    from ghostvendor.agents.pr_generator import generate_pr_markdown
+
+
+# Page Configuration
+st.set_page_config(
+    page_title="GhostVendor — Autonomous Dependency Chaos & Self-Healing",
+    page_icon="👻",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom Styling: Sky Blue, White, and Deep Navy Blue Theme
+st.markdown("""
+<style>
+    /* Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    code, pre {
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+
+    /* Core Application Background: Deep Navy Blue */
+    .stApp {
+        background: radial-gradient(ellipse at 15% 10%, #0e2442 0%, #08111e 60%, #040810 100%);
+        color: #f8fafc;
+    }
+
+    /* Sidebar Styling */
+    section[data-testid="stSidebar"] {
+        background-color: #071324 !important;
+        border-right: 1px solid rgba(56, 189, 248, 0.18);
+    }
+    
+    section[data-testid="stSidebar"] .stMarkdown h2, 
+    section[data-testid="stSidebar"] .stMarkdown h3 {
+        color: #ffffff !important;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    /* Top Glassmorphic Navy & Sky Blue Header */
+    .gv-header {
+        background: linear-gradient(135deg, rgba(14, 36, 66, 0.85) 0%, rgba(8, 19, 36, 0.95) 100%);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 16px;
+        padding: 28px 32px;
+        margin-bottom: 28px;
+        box-shadow: 0 12px 35px -8px rgba(2, 132, 199, 0.25), 0 0 1px 1px rgba(56, 189, 248, 0.2);
+        backdrop-filter: blur(12px);
+    }
+
+    .gv-title {
+        font-size: 2.35rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, #ffffff 0%, #bae6fd 45%, #38bdf8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0;
+        letter-spacing: -0.03em;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .gv-subtitle {
+        color: #e0f2fe;
+        font-size: 1.05rem;
+        margin-top: 8px;
+        font-weight: 400;
+        opacity: 0.9;
+    }
+
+    /* Badge Pills: Sky Blue, White, and Navy */
+    .badge-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 14px;
+        border-radius: 9999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-right: 8px;
+        margin-top: 10px;
+        background: rgba(14, 165, 233, 0.12);
+        color: #38bdf8;
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
+
+    .badge-white {
+        background: rgba(255, 255, 255, 0.08);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+    }
+
+    .badge-crit {
+        background: rgba(239, 68, 68, 0.12);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+
+    .badge-pass {
+        background: rgba(16, 185, 129, 0.12);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    /* KPI Cards */
+    .kpi-container {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .kpi-card {
+        background: linear-gradient(145deg, #0f2647 0%, #09172c 100%);
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 12px;
+        padding: 18px 20px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .kpi-card:hover {
+        border-color: rgba(56, 189, 248, 0.55);
+        transform: translateY(-2px);
+    }
+
+    .kpi-label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #7dd3fc;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .kpi-value {
+        font-size: 1.85rem;
+        font-weight: 800;
+        color: #ffffff;
+        margin: 6px 0;
+    }
+
+    .kpi-delta {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #38bdf8;
+    }
+
+    /* Tab Controls */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: rgba(9, 23, 44, 0.7);
+        padding: 6px;
+        border-radius: 12px;
+        border: 1px solid rgba(56, 189, 248, 0.18);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        color: #94a3b8 !important;
+        font-weight: 600;
+        padding: 8px 18px;
+        transition: all 0.2s ease;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+        color: #ffffff !important;
+        box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+    }
+
+    /* Button Primary (Launch Swarm): Sky Blue & Navy */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%) !important;
+        color: #04101e !important;
+        font-weight: 700 !important;
+        font-size: 1rem !important;
+        border: none !important;
+        border-radius: 10px !important;
+        padding: 12px 24px !important;
+        box-shadow: 0 4px 18px rgba(56, 189, 248, 0.35) !important;
+        transition: all 0.2s ease-in-out !important;
+    }
+
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #7dd3fc 0%, #0ea5e9 100%) !important;
+        box-shadow: 0 6px 24px rgba(56, 189, 248, 0.55) !important;
+        transform: translateY(-1px);
+        color: #020b14 !important;
+    }
+
+    /* Secondary buttons & downloads */
+    .stDownloadButton > button {
+        background: #0f2747 !important;
+        color: #38bdf8 !important;
+        border: 1px solid rgba(56, 189, 248, 0.4) !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    
+    .stDownloadButton > button:hover {
+        background: #173863 !important;
+        color: #ffffff !important;
+        border-color: #38bdf8 !important;
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background-color: #0d203a !important;
+        color: #ffffff !important;
+        border: 1px solid rgba(56, 189, 248, 0.2) !important;
+        border-radius: 10px !important;
+        font-weight: 600;
+    }
+
+    /* Progress bar */
+    .stProgress > div > div > div > div {
+        background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%) !important;
+    }
+
+    /* Info & Warning Callout Blocks */
+    .stAlert {
+        border-radius: 10px !important;
+        backdrop-filter: blur(8px);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# Render Header
+st.markdown("""
+<div class="gv-header">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+        <div>
+            <h1 class="gv-title">
+                <span>👻</span> GhostVendor
+            </h1>
+            <div class="gv-subtitle">Autonomous Multi-Agent Dependency Chaos Engineering & Self-Healing Pipeline</div>
+            <div>
+                <span class="badge-pill">6-Agent Swarm</span>
+                <span class="badge-pill badge-white">Autonomous Patching</span>
+                <span class="badge-pill">Zero-Regression SLA</span>
+                <span class="badge-pill badge-white">GitLab Duo / GitHub PR</span>
+                <span class="badge-pill badge-pass">PS02: Autonomous AI Engineer</span>
+            </div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# Sidebar Configuration
+with st.sidebar:
+    st.markdown("""
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+            <div style="background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.3); border-radius: 10px; padding: 6px 10px; display: inline-block;">
+                <span style="font-size: 1.5rem;">👻</span>
+            </div>
+            <div>
+                <h3 style="margin: 0; color: #ffffff; font-size: 1.15rem;">Control Plane</h3>
+                <span style="color: #7dd3fc; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Autonomous Engine</span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
+    
+    scenario_choice = st.selectbox(
+        "🎯 Select Target Scenario",
+        list(SCENARIOS.keys())
+    )
+    
+    scenario = SCENARIOS[scenario_choice]
+    st.markdown(f"**Target Vendor:** <span class='badge-pill' style='margin:0 0 6px 0;'>{scenario['vendor']}</span>", unsafe_allow_html=True)
+    st.info(scenario["description"])
+    
+    st.divider()
+    st.markdown("### 💥 Chaos Parameters")
+    
+    selected_chaos = st.multiselect(
+        "Active Chaos Vectors",
+        options=scenario["supported_chaos"],
+        default=[scenario["supported_chaos"][0]]
+    )
+    
+    latency = st.slider(
+        "Simulated Network Jitter / Delay (s)",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.0,
+        step=0.25
+    )
+    
+    st.divider()
+    with st.expander("🔑 Advanced: LLM Orchestrator"):
+        custom_key = st.text_input(
+            "OpenAI API Key (Optional)", 
+            type="password", 
+            help="Leave blank to use GhostVendor's built-in heuristic AST resilience synthesizer"
+        )
+        
+    run_btn = st.button("🚀 Launch GhostVendor Swarm", type="primary", use_container_width=True)
+
+
+# Main Tabs
+tab_pipeline, tab_pr, tab_custom, tab_arch = st.tabs([
+    "⚡ Agent Swarm Pipeline",
+    "📦 Verified Pull Request",
+    "🛠️ Custom Code Sandbox",
+    "🏛️ System Architecture"
+])
+
+# Initialize session state for workflow results
+if "swarm_completed" not in st.session_state:
+    st.session_state.swarm_completed = False
+    st.session_state.detective_report = None
+    st.session_state.diagnosis = None
+    st.session_state.patch_meta = None
+    st.session_state.verification = None
+
+
+if run_btn:
+    st.session_state.swarm_completed = False
+    
+    with tab_pipeline:
+        st.subheader(f"⚡ Executing Resilience Run on: `{scenario_choice}`")
+        progress_bar = st.progress(0, text="Initializing Agent Swarm...")
+        
+        # ---------------------------------------------------------
+        # AGENT 1: Detective
+        # ---------------------------------------------------------
+        progress_bar.progress(15, text="Agent 1: Dependency Detective analyzing AST...")
+        detective = DependencyDetective()
+        detective_report = detective.analyze(scenario["code"])
+        st.session_state.detective_report = detective_report
+        time.sleep(0.35)
+
+        # ---------------------------------------------------------
+        # AGENT 2 & 3: Impostor & Chaos
+        # ---------------------------------------------------------
+        progress_bar.progress(35, text="Agent 2 & 3: Impostor & Chaos Engine mounting mocks...")
+        chaos_engine = ChaosEngine(active_chaos=selected_chaos, latency_seconds=latency)
+        mock_client = VendorImpostorFactory.get_client_for_vendor(
+            scenario["vendor"],
+            chaos_engine,
+            scenario["baseline_mock_response"]
+        )
+        time.sleep(0.35)
+
+        # ---------------------------------------------------------
+        # AGENT 4: Diagnostics
+        # ---------------------------------------------------------
+        progress_bar.progress(55, text="Agent 4: Failure Diagnostic Agent capturing crash vectors...")
+        diagnostic_agent = DiagnosticAgent()
+        
+        scope = {}
+        exec(scenario["code"], scope)
+        orig_func = scope[scenario["entry_point"]]
+        
+        diagnosis = diagnostic_agent.run_and_diagnose(
+            orig_func,
+            scenario["sample_input"],
+            mock_client,
+            selected_chaos
+        )
+        st.session_state.diagnosis = diagnosis
+        time.sleep(0.4)
+
+        # ---------------------------------------------------------
+        # AGENT 5: Self-Healer
+        # ---------------------------------------------------------
+        progress_bar.progress(75, text="Agent 5: Self-Healing Agent synthesizing defensive patch...")
+        healer = SelfHealerAgent(api_key=custom_key if custom_key else None)
+        patch_meta = healer.generate_patch(
+            scenario_choice,
+            scenario["code"],
+            diagnosis,
+            scenario["vendor"]
+        )
+        st.session_state.patch_meta = patch_meta
+        time.sleep(0.4)
+
+        # ---------------------------------------------------------
+        # AGENT 6: Verifier
+        # ---------------------------------------------------------
+        progress_bar.progress(90, text="Agent 6: Resilience Verifier executing stress matrix...")
+        verifier = VerifierAgent()
+        verification = verifier.run_verification_battery(
+            entry_point=scenario["entry_point"],
+            original_code=scenario["code"],
+            patched_code=patch_meta["patched_code"],
+            vendor_name=scenario["vendor"],
+            sample_input=scenario["sample_input"],
+            baseline_data=scenario["baseline_mock_response"],
+            supported_chaos=scenario["supported_chaos"]
+        )
+        st.session_state.verification = verification
+        time.sleep(0.3)
+
+        progress_bar.progress(100, text="Resilience Swarm Cycle Complete!")
+        st.session_state.swarm_completed = True
+        st.success("🎉 All 6 Agents successfully completed their run cycle!")
+
+
+# Render Pipeline Output
+with tab_pipeline:
+    if st.session_state.swarm_completed:
+        rep = st.session_state.detective_report
+        diag = st.session_state.diagnosis
+        patch = st.session_state.patch_meta
+        veri = st.session_state.verification
+        
+        # Sky Blue & Navy KPI Cards
+        st.markdown(f"""
+        <div class="kpi-container">
+            <div class="kpi-card">
+                <div class="kpi-label">Fragility Risk</div>
+                <div class="kpi-value">{rep.get('risk_score')}/100</div>
+                <div class="kpi-delta" style="color: #fca5a5;">{rep.get('risk_level')} SEVERITY</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Intercepted Crash</div>
+                <div class="kpi-value" style="font-size: 1.45rem; line-height: 2rem;">{diag.get('error_type') or 'None'}</div>
+                <div class="kpi-delta">Chaos Caught in Harness</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Survival Improvement</div>
+                <div class="kpi-value" style="color: #38bdf8;">{veri.get('survival_delta')}</div>
+                <div class="kpi-delta">{veri.get('original_rate')} ➡️ {veri.get('patched_rate')}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Merge Authorization</div>
+                <div class="kpi-value" style="color: {'#4ade80' if veri.get('certified_ready') else '#facc15'};">
+                    {'CERTIFIED' if veri.get('certified_ready') else 'PARTIAL'}
+                </div>
+                <div class="kpi-delta">Zero-Regression Verified</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.divider()
+
+        # Step 1: Detective
+        with st.expander("🕵️ Step 1: Static AST Dependency & Risk Analysis", expanded=True):
+            col_d1, col_d2 = st.columns([1, 1])
+            with col_d1:
+                st.markdown(f"**Target Function:** `{scenario['entry_point']}`")
+                st.markdown(f"**Detected Vendor Integration:** `{scenario['vendor']}`")
+                st.markdown(f"**Calculated Fragility:** `{rep['risk_score']}/100` ({rep['risk_level']})")
+            with col_d2:
+                st.markdown("**Identified Vulnerability Patterns:**")
+                for pat in rep.get("fragile_patterns", []):
+                    st.error(f"Line {pat['line']}: {pat['type']} — *{pat['detail']}*")
+
+        # Step 2 & 3: Chaos & Diagnostic
+        with st.expander("💥 Step 2 & 3: Chaos Injection & Intercepted Failure", expanded=True):
+            col_c1, col_c2 = st.columns([1, 1])
+            with col_c1:
+                st.markdown("**Simulated Vendor Chaos:**")
+                st.json({
+                    "Active Vectors": selected_chaos,
+                    "Simulated Delay": f"{latency}s",
+                    "Vendor Mocks": f"Dynamic Impostor ({scenario['vendor']})"
+                })
+            with col_c2:
+                st.markdown("**Interception Diagnostic:**")
+                if not diag["success"]:
+                    st.markdown(f"<span class='badge-pill badge-crit'>FAILED: {diag['error_type']}</span>", unsafe_allow_html=True)
+                    st.write(f"**Root Cause:** {diag['root_cause']}")
+                    st.code(diag["traceback"], language="python")
+                else:
+                    st.success("The original function did not fail on this specific chaos scenario.")
+
+        # Step 4: Self-Healing Patch
+        with st.expander("🩹 Step 4: Self-Healing Defensive Patch Synthesis", expanded=True):
+            st.markdown("**Defensive Patterns Implemented:**")
+            for p in patch.get("defensive_patterns", []):
+                st.markdown(f"- 🛡️ **{p}**")
+
+            diff_tab1, diff_tab2 = st.tabs(["Unified Diff", "Full Patched Code"])
+            with diff_tab1:
+                st.code(patch.get("unified_diff"), language="diff")
+            with diff_tab2:
+                st.code(patch.get("patched_code"), language="python")
+
+        # Step 5: Verification Battery
+        with st.expander("🧪 Step 5: Comparative Chaos Survival Battery", expanded=True):
+            st.markdown(f"**Survival Rate Improvement:** `{veri['original_rate']}` ➡️ **`{veri['patched_rate']}`** (`{veri['survival_delta']}`)")
+            
+            table_data = []
+            for t in veri.get("test_runs", []):
+                table_data.append({
+                    "Stress Scenario": t["name"],
+                    "Original Code": "✅ PASS" if t["orig_success"] else f"❌ CRASH ({t['orig_error']})",
+                    "GhostVendor Patched": "✅ PASS" if t["patched_success"] else f"⚠️ FAIL ({t['patched_error']})"
+                })
+            st.table(table_data)
+
+    else:
+        st.info("👈 Select a target scenario in the sidebar and click **'Launch GhostVendor Swarm'** to execute the pipeline.")
+        st.subheader("Preview Target Code:")
+        st.code(scenario["code"], language="python")
+
+
+# Tab 2: Pull Request
+with tab_pr:
+    if st.session_state.swarm_completed:
+        pr_md = generate_pr_markdown(
+            scenario_choice,
+            scenario["vendor"],
+            st.session_state.detective_report,
+            st.session_state.diagnosis,
+            st.session_state.patch_meta,
+            st.session_state.verification
+        )
+        st.subheader("Autonomous GitLab Duo / GitHub Pull Request Ready for Merge")
+        st.download_button(
+            label="📥 Download PR Description (.md)",
+            data=pr_md,
+            file_name=f"ghostvendor_{scenario['vendor'].lower()}_pr.md",
+            mime="text/markdown"
+        )
+        st.markdown(pr_md)
+    else:
+        st.info("Execute a swarm run first to generate a verified Pull Request.")
+
+
+# Tab 3: Custom Code Sandbox
+with tab_custom:
+    st.subheader("🛠️ Test Your Own Target Code Against Chaos")
+    st.caption("Paste any Python function that invokes an external vendor API to assess fragility.")
+    
+    custom_vendor = st.selectbox("Simulate Third-Party Vendor", ["Stripe", "SendGrid", "Auth0", "OpenAI"])
+    custom_func_name = st.text_input("Entry Function Name", "my_handler")
+    
+    custom_code = st.text_area(
+        "Python Target Function",
+        height=220,
+        value="""def my_handler(payload, vendor_client):
+    # Fragile external call
+    res = vendor_client.charges.create(amount=payload["amount"])
+    return res["customer"]["id"]
+"""
+    )
+    
+    if st.button("Run Chaos Interceptor on Custom Code", type="primary"):
+        det = DependencyDetective().analyze(custom_code)
+        st.write(f"**Risk Level:** `{det['risk_level']}` ({det['risk_score']}/100)")
+        for p in det["fragile_patterns"]:
+            st.warning(f"Line {p['line']}: {p['type']} — {p['detail']}")
+
+
+# Tab 4: Architecture
+with tab_arch:
+    st.markdown("""
+### 🏛️ GhostVendor Architecture & Autonomous Workflow
+
+```
+  +---------------------+
+  |   Code Merge / PR   |
+  +----------+----------+
+             |
+             v
+  [1. Dependency Detective] ---> Discovers external SDKs, AST imports, and unsafe indexing
+             |
+             v
+  [2. Vendor Impostor]     ---> Creates dynamic mocks for third-party endpoints
+             |
+             v
+  [3. Chaos Injection]     ---> Injects schema drift, HTTP 429/500/503, timeouts, empty lists
+             |
+             v
+  [4. Failure Diagnostic]  ---> Intercepts stack traces, isolates root cause
+             |
+             v
+  [5. Self-Healing Agent]  ---> Synthesizes defensive patterns (.get(), retries, fallbacks)
+             |
+             v
+  [6. Resilience Verifier] ---> Runs stress matrix; certifies survival & zero regressions
+             |
+             v
+  +---------------------+
+  | Verified Resilient  |
+  |     Pull Request    |
+  +---------------------+
+```
+
+#### Why GhostVendor Fits Hackathons (PS02: Autonomous AI Software Engineer):
+1. **Third-Party Drift is Inevitable:** External API providers regularly deploy unannounced deprecations, change JSON payloads, or experience localized outages.
+2. **Proactive Inoculation:** Instead of discovering fragility in production at 3 AM, GhostVendor aggressively stress-tests code in CI before merge.
+3. **Autonomous Remediation:** Developers don't just get an alert; they receive a tested, zero-regression patch ready to merge.
+""")
